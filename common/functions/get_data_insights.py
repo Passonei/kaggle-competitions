@@ -9,17 +9,25 @@ from typing import Iterator
 from common.utils import get_next_feature_from_iter
 
 
-def get_quantitavie_and_categorical_columns(df: pd.DataFrame, unique=10):
+def get_quantitative_and_categorical_columns(df: pd.DataFrame, unique_threshold: int = 10):
     """
-    df: pd.DataFrame
-    unique: number of unique values that defines if coulmn is categorical or numerical
+    Separate DataFrame columns into quantitative and categorical based on unique value count.
+    
+    Args:
+        df: DataFrame to analyze
+        unique_threshold: columns with more unique values than this are considered quantitative
+    
+    Returns:
+        tuple: (quantitative_columns, categorical_columns) as lists
     """
     quantitative, categorical = [], []
-    for i in df.columns:
-        if len(df[i].unique() > unique):
-            quantitative.append(i)
+    for col in df.columns:
+        if len(df[col].unique()) > unique_threshold:
+            quantitative.append(col)
         else:
-            categorical.append(i)
+            categorical.append(col)
+    
+    return quantitative, categorical
 
 
 def missing_data(df: pd.DataFrame, n: int):

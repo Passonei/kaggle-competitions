@@ -1,17 +1,37 @@
+"""
+Housing Price Prediction Pipeline Transformers.
+
+Custom sklearn-compatible transformers for the House Prices Kaggle competition.
+Each transformer follows the BaseEstimator/TransformerMixin pattern for use in sklearn Pipelines.
+"""
+
 import numpy as np
 import pandas as pd
 
-from typing import Sequence
+from typing import Sequence, List, Dict, Optional
 
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, RobustScaler, PolynomialFeatures
 
-# LotArea, GrLivArea
+
 class Log1pFeatureImputer(BaseEstimator, TransformerMixin):
     """
-    Adds Log1p features, allow to keep or drop original features.
+    Apply log1p transformation to specified numeric features.
+    
+    Log1p (log(1 + x)) is useful for right-skewed features like LotArea, GrLivArea.
+    It helps normalize distributions and reduce the impact of outliers.
+    
+    Args:
+        features: List of column names to transform
+        drop_original: If True, remove original columns after transformation
+        clip_negative: If True, clip negative values to 0 before transformation
+        prefix: Prefix for new column names (default: "log1p_")
+    
+    Example:
+        >>> imputer = Log1pFeatureImputer(["LotArea", "GrLivArea"])
+        >>> X_transformed = imputer.fit_transform(df)
     """
-    def __init__(self, features: list, drop_original: bool = True, clip_negative=True, prefix: str = "log1p_"):
+    def __init__(self, features: List[str], drop_original: bool = True, clip_negative: bool = True, prefix: str = "log1p_"):
         self.features = features
         self.drop_original = drop_original
         self.clip_negative = clip_negative
@@ -44,6 +64,13 @@ class Log1pFeatureImputer(BaseEstimator, TransformerMixin):
     
 
 class LotFrontageNeighborhoodImputer(BaseEstimator, TransformerMixin):
+    """
+    Impute missing LotFrontage values using neighborhood median.
+    
+    Strategy: Missing LotFrontage values are filled with the median LotFrontage
+    of the same Neighborhood. If neighborhood median is also NaN, uses global median.
+    Also creates a binary indicator 'LotFrontage_is_missing' for the model.
+    """
     def fit(self, X: pd.DataFrame, y=None):
         X = X.copy()
         self.global_median_ = X['LotFrontage'].median()
@@ -60,8 +87,16 @@ class LotFrontageNeighborhoodImputer(BaseEstimator, TransformerMixin):
         
         return X_out
     
-# Alley, BsmtQual, BsmtCond, BsmtExposure, BsmtFinType1, BsmtFinType2, FireplaceQu, GarageType, GarageFinish, GarageQual, GarageCond, PoolQC, Fence, MiscFeature, MasVnrType, Electrical
 class MeaningfullNAImputer(BaseEstimator, TransformerMixin):
+    """
+    Fill NaN values with "NA" for features where missing means absence of feature.
+    
+    Many housing features (Alley, Pool, Garage, etc.) have NaN values that actually
+    mean "not applicable" or "none" - e.g., no alley access, no pool.
+    This transformer fills those with "NA" string for proper categorical encoding.
+    
+    Typical features: Alley, BsmtQual, BsmtCond, FireplaceQu, GarageType, PoolQC, Fence, MiscFeature
+    """
     def __init__(self, features: Sequence[str]):
         self.features = features
         self.null_value = "NA"
@@ -81,15 +116,20 @@ class MeaningfullNAImputer(BaseEstimator, TransformerMixin):
 
 class BooleanFeaturesImputer(BaseEstimator, TransformerMixin):
     """
-    1. HasRemod - YearRemodAdd != constrution date
-    2. HasFireplace -> Fireplaces > 0
-    3. HasGarage -> GarageType != NA
-    4. HasPool -> PoolQC != NA
-    5. HasFence -> Fence != NA
-    6. HasMiscFeature -> MiscFeature != NA
-    7. IsNormalSaleCondition -> SaleCondition == Normal
-    8. HasBasement
-    9. Has2ndFloor
+    Create boolean indicator features from existing columns.
+    
+    Creates the following binary features:
+        - HasRemod: True if house was remodeled (YearRemodAdd > YearBuilt)
+        - HasFireplace: True if Fireplaces > 0
+        - HasGarage: True if GarageType != "NA"
+        - HasPool: True if PoolQC != "NA"
+        - HasFence: True if Fence != "NA"
+        - HasMiscFeature: True if MiscFeature != "NA"
+        - IsNormalSaleCondition: True if SaleCondition == "Normal"
+        - HasBasement: True if BsmtQual != "NA"
+        - Has2ndFloor: True if 2ndFlrSF > 0
+    
+    Note: Requires MeaningfullNAImputer to run first to fill NA values.
     """
     def fit(self, X: pd.DataFrame, y=None):
         return self
@@ -105,12 +145,21 @@ class BooleanFeaturesImputer(BaseEstimator, TransformerMixin):
         X_out['HasMiscFeature'] = X_out['MiscFeature'].ne("NA")
         X_out['IsNormalSaleCondition'] = X_out['SaleCondition'].eq("Normal")
         X_out['HasBasement'] = X_out['BsmtQual'].ne("NA")
-        X_out['Has2ndFloor'] = X_out['2ndFlrSF'].eq(0)
+        X_out['Has2ndFloor'] = X_out['2ndFlrSF'].ne(0)
 
         return X_out
 
 
 class SFImputer(BaseEstimator, TransformerMixin):
+    """
+    Create aggregate square footage features.
+    
+    Creates:
+        - FloorTotalSF: Sum of 1stFlrSF + 2ndFlrSF (above ground living area)
+        - TotalSF: FloorTotalSF + TotalBsmtSF (total finished square footage)
+    
+    These are strong predictors as larger homes generally command higher prices.
+    """
     def fit(self, X: pd.DataFrame, y=None):
         return self
 
@@ -128,6 +177,14 @@ class SFImputer(BaseEstimator, TransformerMixin):
 
 
 class GarageFeaturesImputer(BaseEstimator, TransformerMixin):
+    """
+    Handle garage-related features and create derived metrics.
+    
+    Handles:
+        - GarageYrBlt: Fill missing with YearBuilt (assume garage built with house)
+        - GarageAreaPerCar: Calculated ratio (0 if no garage)
+        - GarageArea/GarageCars: Fill remaining NaN with 0
+    """
     def fit(self, X: pd.DataFrame, y=None):
         return self
 
@@ -135,12 +192,9 @@ class GarageFeaturesImputer(BaseEstimator, TransformerMixin):
         X_out = X.copy()
         X_out['GarageYrBlt'] = X_out['GarageYrBlt'].fillna(X_out['YearBuilt'])
 
-        # fill 0 if no garage
+        # Calculate area per car, handling division by zero (no garage = 0 cars)
         ratio = X_out['GarageArea'] / X_out['GarageCars'].replace({0: np.nan})
         X_out['GarageAreaPerCar'] = ratio.fillna(0)
-        
-        X_out['GarageAreaPerCar'] = X_out['GarageArea'] / X_out['GarageCars']
-        X_out['GarageAreaPerCar'] = X_out['GarageAreaPerCar'].fillna(0)
         X_out['GarageArea'] = X_out['GarageArea'].fillna(0.0)
         X_out['GarageCars'] = X_out['GarageCars'].fillna(0.0)
 
